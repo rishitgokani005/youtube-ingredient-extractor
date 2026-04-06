@@ -1,0 +1,1309 @@
+import os
+import re
+from fractions import Fraction
+from flask import Flask, render_template, request, jsonify
+from yt_dlp import YoutubeDL
+import stringi
+
+app = Flask(__name__)
+
+TMP_DIR = "tmp_subs"
+os.makedirs(TMP_DIR, exist_ok=True)
+
+# Comprehensive ingredient keywords
+# Clean comprehensive ingredient keywords (no duplicates)
+COMMON_INGREDIENT_WORDS = [
+    # Proteins
+    "chicken", "beef", "pork", "lamb", "turkey", "duck", "fish", "salmon", "tuna", "shrimp", 
+    "prawns", "crab", "lobster", "scallops", "mussels", "clams", "oysters", "ham", "bacon", 
+    "sausage", "chorizo", "pepperoni", "tofu", "tempeh", "seitan", "eggs", "egg",
+    
+    # Dairy
+    "milk", "cream", "butter", "cheese", "cheddar", "mozzarella", "parmesan", "feta", 
+    "goat cheese", "ricotta", "cottage cheese", "yogurt", "sour cream", "buttermilk",
+    "heavy cream", "half and half", "mascarpone", "cream cheese", "paneer",
+    
+    # Grains and starches
+    "flour", "rice", "quinoa", "pasta", "noodles", "bread", "breadcrumbs", "oats", 
+    "barley", "bulgur", "couscous", "polenta", "cornmeal", "cornstarch", "potato", 
+    "potatoes", "sweet potato", "yam", "macaroni", "spaghetti", "linguine",
+    
+    # Vegetables
+    "onion", "onions", "garlic", "tomato", "tomatoes", "carrot", "carrots", "celery", 
+    "bell pepper", "peppers", "chili", "chilli", "jalapeño", "habanero", "serrano",
+    "spinach", "kale", "lettuce", "arugula", "cabbage", "broccoli", "cauliflower",
+    "zucchini", "eggplant", "cucumber", "radish", "beetroot", "turnip", "leek", "scallions",
+    "green onions", "shallots", "mushrooms", "mushroom", "shiitake", "portobello",
+    "asparagus", "artichoke", "avocado", "corn", "peas", "beans", "green beans",
+    
+    # Fruits
+    "apple", "apples", "banana", "bananas", "lemon", "lemons", "lime", "limes", 
+    "orange", "oranges", "grapefruit", "berries", "strawberries", "blueberries", 
+    "raspberries", "blackberries", "grapes", "pineapple", "mango", "papaya", 
+    "kiwi", "melon", "watermelon", "cantaloupe", "peach", "pear", "plum", "cherry",
+    
+    # Herbs and spices
+    "salt", "pepper", "sugar", "basil", "oregano", "thyme", "rosemary", "sage", 
+    "parsley", "cilantro", "coriander", "dill", "chives", "mint", "tarragon",
+    "cumin", "paprika", "turmeric", "ginger", "cinnamon", "nutmeg", "cloves", 
+    "cardamom", "star anise", "fennel", "bay leaf", "bay leaves", "vanilla",
+    "saffron", "sumac", "za'atar", "curry powder", "garam masala", "chili powder",
+    "cayenne", "black pepper", "white pepper", "red pepper flakes",
+    
+    # Liquids and oils
+    "water", "oil", "olive oil", "vegetable oil", "canola oil", "coconut oil", 
+    "sesame oil", "sunflower oil", "avocado oil", "vinegar", "balsamic vinegar", 
+    "apple cider vinegar", "white vinegar", "rice vinegar", "wine vinegar",
+    "broth", "stock", "chicken stock", "beef stock", "vegetable stock", "bone broth",
+    "wine", "white wine", "red wine", "beer", "sake", "mirin", "coconut milk",
+    
+    # Pantry staples
+    "honey", "maple syrup", "molasses", "brown sugar", "powdered sugar", "confectioners sugar",
+    "baking powder", "baking soda", "yeast", "gelatin", "agar", "tahini", "peanut butter", 
+    "almond butter", "jam", "jelly", "preserves", "mustard", "ketchup", "mayonnaise", 
+    "soy sauce", "fish sauce", "worcestershire", "tabasco", "sriracha", "hot sauce", 
+    "tomato paste", "tomato sauce", "coconut", "coconut flakes",
+    
+    # Nuts and seeds
+    "almonds", "walnuts", "pecans", "hazelnuts", "pistachios", "cashews", "peanuts",
+    "pine nuts", "macadamia", "brazil nuts", "sunflower seeds", "pumpkin seeds",
+    "sesame seeds", "chia seeds", "flax seeds", "poppy seeds",
+    
+    # Legumes
+    "black beans", "kidney beans", "pinto beans", "navy beans", "lima beans",
+    "chickpeas", "garbanzo beans", "lentils", "red lentils", "green lentils", "split peas",
+    
+    # Specialty ingredients
+    "chocolate", "cocoa powder", "dark chocolate", "white chocolate", "capers", "olives",
+    "pickles", "anchovies", "sundried tomatoes", "roasted peppers", "artichoke hearts"
+]
+
+
+
+UNIT_TOKENS = [
+      # Volume units
+    "cup", "cups", "tbsp", "tablespoon", "tablespoons", "tsp", "teaspoon", "teaspoons", 
+    "ml", "milliliter", "milliliters", "l", "liter", "liters", "gallon", "gallons", 
+    "quart", "quarts", "pint", "pints", "fluid ounce", "fluid ounces", "fl oz", 
+    "drop", "drops", "dash", "dashes", "pinch", "pinches",
+    
+    # Weight units
+    "g", "gram", "grams", "kg", "kilogram", "kilograms", "ounce", "ounces", "oz", 
+    "pound", "pounds", "lb", "lbs",
+    
+    # Count units
+    "clove", "cloves", "slice", "slices", "piece", "pieces", "whole", "halves", 
+    "package", "packages", "pack", "packs", "packet", "packets", "can", "cans", 
+    "jar", "jars", "bottle", "bottles", "bunch", "bunches", "head", "heads",
+    "stick", "sticks", "stalk", "stalks", "sprig", "sprigs", "leaf", "leaves"
+    # Volume units
+    "cup", "cups", "tbsp", "tablespoon", "tablespoons", "tsp", "teaspoon", "teaspoons", 
+    "ml", "milliliter", "milliliters", "l", "liter", "liters", "gallon", "gallons", 
+    "quart", "quarts", "pint", "pints", "fluid ounce", "fluid ounces", "fl oz", 
+    "drop", "drops", "dash", "dashes", "pinch", "pinches",
+    
+    # Weight units
+    "g", "gram", "grams", "kg", "kilogram", "kilograms", "ounce", "ounces", "oz", 
+    "pound", "pounds", "lb", "lbs",
+    
+    # Count units
+    "clove", "cloves", "slice", "slices", "piece", "pieces", "whole", "halves", 
+    "package", "packages", "pack", "packs", "packet", "packets", "can", "cans", 
+    "jar", "jars", "bottle", "bottles", "bunch", "bunches", "head", "heads",
+    "stick", "sticks", "stalk", "stalks", "sprig", "sprigs", "leaf", "leaves"
+]
+
+
+
+
+
+# Words that should be excluded from ingredient detection
+EXCLUDE_WORDS = [
+    "has", "have", "had", "do", "does", "did", "is", "are", "was", "were", "be", "being", "been",
+    "the", "a", "an", "and", "or", "but", "yet", "so", "for", "nor", "of", "to", "in", "on", "at",
+    "by", "with", "about", "against", "between", "into", "through", "during", "before", "after",
+    "above", "below", "from", "up", "down", "out", "off", "over", "under", "again", "further",
+    "then", "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each",
+    "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same",
+    "than", "too", "very", "can", "will", "just", "should", "now", "let's", "we're", "you're",
+    "they're", "i'm", "he's", "she's", "it's", "that's", "what's", "who's", "where's", "when's",
+    "why's", "how's", "which", "that", "this", "these", "those", "whom", "whose", "whatever",
+    "whoever", "whichever", "whenever", "wherever", "however", "whether", "while", "until",
+    "unless", "although", "though", "even", "if", "because", "since", "so that", "than", "rather",
+    "whether", "either", "neither", "both", "not only", "but also", "as well as", "whether or not",
+    "just as", "so", "such that", "in order that", "lest", "provided that", "assuming that",
+    "given that", "in case", "so long as", "unless", "until", "when", "whenever", "where",
+    "wherever", "while", "after", "as", "before", "once", "since", "till", "until", "when", 
+    "whenever", "while", "because", "since", "so that", "in order that", "why", "although", 
+    "though", "even though", "while", "whereas", "if", "only if", "unless", "until", "provided that",
+    "assuming that", "even if", "in case", "lest", "than", "rather than", "whether", "as much as",
+    "whereas", "after", "as", "before", "once", "since", "till", "until", "when", "whenever", 
+    "while", "about", "above", "across", "after", "against", "along", "among", "around", "at", 
+    "before", "behind", "below", "beneath", "beside", "between", "beyond", "by", "concerning", 
+    "considering", "despite", "down", "during", "except", "for", "from", "in", "inside", "into", 
+    "like", "near", "of", "off", "on", "onto", "out", "outside", "over", "past", "regarding", 
+    "round", "since", "through", "throughout", "to", "toward", "under", "underneath", "until", 
+    "up", "upon", "with", "within", "without"
+     "has", "have", "had", "do", "does", "did", "is", "are", "was", "were", "be", "being", "been",
+    "the", "a", "an", "and", "or", "but", "yet", "so", "for", "nor", "of", "to", "in", "on", "at",
+    "by", "with", "about", "against", "between", "into", "through", "during", "before", "after",
+    "above", "below", "from", "up", "down", "out", "off", "over", "under", "again", "further",
+    "then", "once", "here", "there", "when", "where", "why", "how", "all", "any", "both", "each",
+    "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same",
+    "than", "too", "very", "can", "will", "just", "should", "now", "let's", "we're", "you're",
+    "they're", "i'm", "he's", "she's", "it's", "that's", "what's", "who's", "where's", "when's",
+    "why's", "how's", "which", "that", "this", "these", "those", "whom", "whose", "whatever",
+    "whoever", "whichever", "whenever", "wherever", "however", "whether", "while", "until",
+    "unless", "although", "though", "even", "if", "because", "since", "so that", "than", "rather",
+    "whether", "either", "neither", "both", "not only", "but also", "as well as", "whether or not",
+    "just as", "so", "such that", "in order that", "lest", "provided that", "assuming that",
+    "given that", "in case", "so long as", "unless", "until", "when", "whenever", "where",
+    "wherever", "while", "after", "as", "before", "once", "since", "till", "until", "when", 
+    "whenever", "while", "because", "since", "so that", "in order that", "why", "although", 
+    "though", "even though", "while", "whereas", "if", "only if", "unless", "until", "provided that",
+    "assuming that", "even if", "in case", "lest", "than", "rather than", "whether", "as much as",
+    "whereas", "after", "as", "before", "once", "since", "till", "until", "when", "whenever", 
+    "while", "about", "above", "across", "after", "against", "along", "among", "around", "at", 
+    "before", "behind", "below", "beneath", "beside", "between", "beyond", "by", "concerning", 
+    "considering", "despite", "down", "during", "except", "for", "from", "in", "inside", "into", 
+    "like", "near", "of", "off", "on", "onto", "out", "outside", "over", "past", "regarding", 
+    "round", "since", "through", "throughout", "to", "toward", "under", "underneath", "until", 
+    "up", "upon", "with", "within", "without"
+]
+
+
+# Common preparation terms that might appear in ingredient lines
+PREP_TERMS = [
+     "chopped", "diced", "minced", "sliced", "grated", "shredded", "crushed", "mashed",
+    "cubed", "julienned", "whole", "peeled", "seeded", "cored", "divided", "softened",
+    "melted", "cooled", "warmed", "to taste", "optional", "fresh", "dried", "ground",
+    "powdered", "toasted", "roasted", "raw", "cooked", "canned", "frozen", "thawed",
+    "packed", "light", "dark", "unsalted", "salted", "low-fat", "full-fat", "non-fat",
+    "finely", "coarsely", "roughly", "thinly", "thickly", "freshly", "newly", "recently",
+    "cold", "warm", "hot", "room temperature", "chilled", "frozen", "thawed", "defrosted",
+    "washed", "cleaned", "trimmed", "cut", "sliced", "diced", "chopped", "minced", "grated",
+    "shredded", "crushed", "mashed", "pureed", "blended", "whipped", "beaten", "stirred",
+    "mixed", "combined", "kneaded", "rolled", "folded", "sifted", "strained", "drained",
+    "rinsed", "soaked", "marinated", "seasoned", "flavored", "spiced", "herbed", "salted",
+    "peppered", "sugared", "sweetened", "soured", "bittered", "umami", "savory", "sweet",
+    "sour", "bitter", "salty", "spicy", "hot", "mild", "bland", "rich", "poor", "good",
+    "bad", "nice", "great", "excellent", "perfect", "ideal", "wonderful", "fantastic",
+    "amazing", "awesome", "terrible", "horrible", "awful", "disgusting", "delicious",
+    "tasty", "yummy", "scrumptious", "delectable", "mouthwatering", "appetizing",
+    "flavorful", "flavourful", "aromatic", "fragrant", "pungent", "strong", "weak",
+    "mild", "bland", "insipid", "tasteless", "flavorless", "flavourless", "boring",
+    "interesting", "exciting", "novel", "new", "old", "traditional", "classic", "modern",
+    "contemporary", "innovative", "creative", "original", "unique", "special", "different",
+    "similar", "same", "identical", "alike", "unlike", "different", "various", "varied",
+    "diverse", "assorted", "mixed", "blended", "combined", "unified", "separated", "divided",
+    "split", "broken", "cracked", "crushed", "smashed", "shattered", "fragmented", "pieces",
+    "bits", "crumbs", "particles", "granules", "grains", "powder", "dust", "flour", "meal",
+    "paste", "puree", "sauce", "gravy", "broth", "stock", "soup", "stew", "ragout", "curry",
+    "stir-fry", "saute", "fry", "deep-fry", "pan-fry", "shallow-fry", "grill", "broil",
+    "bake", "roast", "toast", "barbecue", "smoke", "steam", "poach", "simmer", "boil",
+    "stew", "braise", "pressure-cook", "slow-cook", "microwave", "heat", "warm", "reheat",
+    "cool", "chill", "freeze", "thaw", "defrost", "melt", "dissolve", "mix", "combine",
+    "blend", "whisk", "beat", "whip", "fold", "stir", "knead", "roll", "shape", "form",
+    "cut", "slice", "dice", "chop", "mince", "grate", "shred", "peel", "core", "seed",
+    "trim", "clean", "wash", "dry", "drain", "strain", "sift", "filter", "press", "squeeze",
+    "juice", "zest", "grate", "shave", "slice", "dice", "chop", "mince", "crush", "grind",
+    "pound", "mash", "puree", "blend", "liquefy", "emulsify", "homogenize", "pasteurize",
+    "sterilize", "sanitize", "clean", "wash", "rinse", "soak", "marinate", "brine", "cure",
+    "smoke", "dry", "dehydrate", "rehydrate", "ferment", "pickle", "preserve", "can", "jar",
+    "bottle", "pack", "wrap", "cover", "seal", "store", "keep", "save", "reserve", "use",
+    "consume", "eat", "drink", "serve", "present", "plate", "garnish", "decorate", "arrange",
+    "organize", "order", "sequence", "list", "enumerate", "itemize", "detail", "describe",
+    "explain", "instruct", "direct", "guide", "lead", "show", "demonstrate", "teach", "educate",
+    "inform", "notify", "tell", "say", "speak", "talk", "discuss", "converse", "chat", "communicate",
+    "express", "state", "declare", "announce", "proclaim", "claim", "assert", "affirm", "confirm",
+    "verify", "validate", "authenticate", "certify", "guarantee", "warranty", "promise", "swear",
+    "vow", "pledge", "commit", "dedicate", "devote", "consecrate", "sanctify", "bless", "curse",
+    "damn", "condemn", "criticize", "blame", "accuse", "charge", "indict", "arraign", "sue", "prosecute",
+    "litigate", "dispute", "contest", "challenge", "oppose", "resist", "defy", "rebel", "revolt",
+    "revolutionize", "transform", "change", "alter", "modify", "adjust", "adapt", "accommodate",
+    "fit", "suit", "match", "correspond", "agree", "conform", "comply", "obey", "follow", "heed",
+    "listen", "hear", "understand", "comprehend", "grasp", "apprehend", "perceive", "discern",
+    "recognize", "identify", "know", "learn", "study", "research", "investigate", "examine",
+    "scrutinize", "analyze", "evaluate", "assess", "appraise", "estimate", "calculate", "compute",
+    "count", "measure", "weigh", "balance", "compare", "contrast", "differentiate", "distinguish",
+    "discriminate", "separate", "divide", "split", "part", "disconnect", "detach", "disengage",
+    "release", "free", "liberate", "emancipate", "enfranchise", "empower", "enable", "allow",
+    "permit", "authorize", "sanction", "approve", "endorse", "support", "back", "fund", "finance",
+    "sponsor", "patronize", "promote", "advertise", "market", "sell", "buy", "purchase", "acquire",
+    "obtain", "get", "receive", "accept", "take", "grab", "snatch", "seize", "capture", "catch",
+    "trap", "ensnare", "entrap", "lure", "attract", "draw", "pull", "tug", "yank", "jerk", "twist",
+    "turn", "rotate", "spin", "roll", "slide", "glide", "slip", "skip", "jump", "leap", "hop",
+    "bound", "vault", "hurdle", "clear", "pass", "cross", "traverse", "navigate", "pilot", "steer",
+    "guide", "direct", "lead", "conduct", "escort", "accompany", "attend", "follow", "shadow",
+    "pursue", "chase", "hunt", "track", "trace", "trail", "follow", "precede", "lead", "guide",
+    "direct", "manage", "administer", "oversee", "supervise", "monitor", "watch", "observe",
+    "survey", "scan", "inspect", "check", "verify", "confirm", "validate", "authenticate",
+    "certify", "guarantee", "warrant", "assure", "ensure", "insure", "protect", "guard", "defend",
+    "shield", "shelter", "cover", "hide", "conceal", "mask", "disguise", "camouflage", "deceive",
+    "trick", "fool", "dupe", "hoodwink", "bamboozle", "swindle", "cheat", "defraud", "embezzle",
+    "steal", "rob", "burgle", "loot", "plunder", "pillage", "ransack", "sack", "ravage", "devastate",
+    "destroy", "ruin", "wreck", "demolish", "annihilate", "obliterate", "eradicate", "eliminate",
+    "remove", "delete", "erase", "expunge", "efface", "blot", "cancel", "void", "nullify", "invalidate",
+    "revoke", "repeal", "rescind", "reverse", "undo", "redo", "repeat", "reiterate", "restate",
+    "rephrase", "paraphrase", "translate", "interpret", "explain", "clarify", "elucidate", "illuminate",
+    "illustrate", "exemplify", "demonstrate", "show", "prove", "verify", "confirm", "validate",
+    "substantiate", "corroborate", "authenticate", "certify", "attest", "witness", "testify",
+    "declare", "state", "assert", "affirm", "claim", "allege", "contend", "maintain", "hold",
+    "believe", "think", "feel", "sense", "perceive", "discern", "detect", "notice", "observe",
+    "watch", "see", "look", "gaze", "stare", "glance", "glimpse", "peek", "peep", "peer", "scrutinize",
+    "examine", "inspect", "survey", "scan", "study", "research", "investigate", "probe", "explore",
+    "search", "seek", "hunt", "look for", "find", "discover", "uncover", "reveal", "expose",
+    "disclose", "divulge", "leak", "spill", "tell", "inform", "notify", "advise", "apprise",
+    "acquaint", "familiarize", "educate", "teach", "instruct", "train", "coach", "mentor", "tutor",
+    "guide", "direct", "lead", "show", "demonstrate", "illustrate", "exemplify", "model", "example",
+    "sample", "specimen", "instance", "case", "occurrence", "event", "happening", "incident",
+    "episode", "affair", "matter", "issue", "topic", "subject", "theme", "motif", "idea", "concept",
+    "notion", "thought", "opinion", "view", "perspective", "standpoint", "viewpoint", "position",
+    "stance", "attitude", "belief", "conviction", "principle", "value", "ideal", "standard",
+    "criterion", "benchmark", "measure", "metric", "indicator", "signal", "sign", "symbol",
+    "token", "mark", "indication", "evidence", "proof", "confirmation", "verification", "validation",
+    "authentication", "certification", "attestation", "testimony", "witness", "statement",
+    "declaration", "affirmation", "assertion", "claim", "allegation", "contention", "argument",
+    "debate", "discussion", "dispute", "controversy", "conflict", "strife", "discord", "dissension",
+    "dissent", "disagreement", "difference", "divergence", "deviation", "variation", "change",
+    "alteration", "modification", "adjustment", "adaptation", "accommodation", "compromise",
+    "settlement", "resolution", "solution", "answer", "response", "reply", "retort", "rejoinder",
+    "counter", "rebuttal", "refutation", "denial", "rejection", "refusal", "declination", "dismissal",
+    "ignore", "disregard", "overlook", "neglect", "omit", "skip", "miss", "avoid", "evade", "escape",
+    "flee", "run", "retreat", "withdraw", "recede", "regress", "revert", "return", "go back",
+    "come back", "reappear", "reemerge", "resurface", "revive", "resurrect", "reanimate", "rejuvenate",
+    "refresh", "renew", "restore", "rebuild", "reconstruct", "remake", "redo", "repeat", "reiterate",
+    "recycle", "reuse", "repurpose", "upcycle", "transform", "convert", "change", "alter", "modify",
+    "adjust", "adapt", "accommodate", "fit", "suit", "match", "correspond", "agree", "harmonize",
+    "coordinate", "synchronize", "integrate", "unify", "combine", "merge", "fuse", "blend", "mix",
+    "join", "connect", "link", "couple", "pair", "bond", "attach", "fasten", "secure", "fix",
+    "anchor", "moor", "tie", "bind", "strap", "belt", "gird", "encircle", "surround", "envelop",
+    "enclose", "contain", "hold", "carry", "bear", "support", "sustain", "maintain", "preserve",
+    "conserve", "save", "keep", "store", "stock", "stockpile", "accumulate", "amass", "collect",
+    "gather", "assemble", "congregate", "meet", "convene", "convoke", "summon", "call", "invite",
+    "request", "ask", "inquire", "question", "query", "interrogate", "examine", "probe", "investigate",
+    "research", "study", "analyze", "evaluate", "assess", "appraise", "estimate", "calculate",
+    "compute", "count", "measure", "weigh", "balance", "compare", "contrast", "differentiate",
+    "distinguish", "discriminate", "separate", "divide", "split", "part", "disconnect", "detach",
+    "disengage", "release", "free", "liberate", "emancipate", "enfranchise", "empower", "enable",
+    "allow", "permit", "authorize", "sanction", "approve", "endorse", "support", "back", "fund",
+    "finance", "sponsor", "patronize", "promote", "advertise", "market", "sell", "buy", "purchase",
+    "acquire", "obtain", "get", "receive", "accept", "take", "grab", "snatch", "seize", "capture",
+    "catch", "trap", "ensnare", "entrap", "lure", "attract", "draw", "pull", "tug", "yank", "jerk",
+    "twist", "turn", "rotate", "spin", "roll", "slide", "glide", "slip", "skip", "jump", "leap",
+    "hop", "bound", "vault", "hurdle", "clear", "pass", "cross", "traverse", "navigate", "pilot",
+    "steer", "guide", "direct", "lead", "conduct", "escort", "accompany", "attend", "follow",
+    "shadow", "pursue", "chase", "hunt", "track", "trace", "trail", "follow", "precede", "lead",
+    "guide", "direct", "manage", "administer", "oversee", "supervise", "monitor", "watch", "observe",
+    "survey", "scan", "inspect", "check", "verify", "confirm", "validate", "authenticate", "certify",
+    "guarantee", "warrant", "assure", "ensure", "insure", "protect", "guard", "defend", "shield",
+    "shelter", "cover", "hide", "conceal", "mask", "disguise", "camouflage", "deceive", "trick",
+    "fool", "dupe", "hoodwink", "bamboozle", "swindle", "cheat", "defraud", "embezzle", "steal",
+    "rob", "burgle", "loot", "plunder", "pillage", "ransack", "sack", "ravage", "devastate", "destroy",
+    "ruin", "wreck", "demolish", "annihilate", "obliterate", "eradicate", "eliminate", "remove",
+    "delete", "erase", "expunge", "efface", "blot", "cancel", "void", "nullify", "invalidate",
+    "revoke", "repeal", "rescind", "reverse", "undo", "redo", "repeat", "reiterate", "restate",
+    "rephrase", "paraphrase", "translate", "interpret", "explain", "clarify", "elucidate", "illuminate",
+    "illustrate", "exemplify", "demonstrate", "show", "prove", "verify", "confirm", "validate",
+    "substantiate", "corroborate", "authenticate", "certify", "attest", "witness", "testify",
+    "declare", "state", "assert", "affirm", "claim", "allege", "contend", "maintain", "hold",
+    "believe", "think", "feel", "sense", "perceive", "discern", "detect", "notice", "observe",
+    "watch", "see", "look", "gaze", "stare", "glance", "glimpse", "peek", "peep", "peer", "scrutinize",
+    "examine", "inspect", "survey", "scan", "study", "research", "investigate", "probe", "explore",
+    "search", "seek", "hunt", "look for", "find", "discover", "uncover", "reveal", "expose",
+    "disclose", "divulge", "leak", "spill", "tell", "inform", "notify", "advise", "apprise",
+    "acquaint", "familiarize", "educate", "teach", "instruct", "train", "coach", "mentor", "tutor",
+    "guide", "direct", "lead", "show", "demonstrate", "illustrate", "exemplify", "model", "example",
+    "sample", "specimen", "instance", "case", "occurrence", "event", "happening", "incident",
+    "episode", "affair", "matter", "issue", "topic", "subject", "theme", "motif", "idea", "concept",
+    "notion", "thought", "opinion", "view", "perspective", "standpoint", "viewpoint", "position",
+    "stance", "attitude", "belief", "conviction", "principle", "value", "ideal", "standard",
+    "criterion", "benchmark", "measure", "metric", "indicator", "signal", "sign", "symbol",
+    "token", "mark", "indication", "evidence", "proof", "confirmation", "verification", "validation",
+    "authentication", "certification", "attestation", "testimony", "witness", "statement",
+    "declaration", "affirmation", "assertion", "claim", "allegation", "contention", "argument",
+    "debate", "discussion", "dispute", "controversy", "conflict", "strife", "discord", "dissension",
+    "dissent", "disagreement", "difference", "divergence", "deviation", "variation", "change",
+    "alteration", "modification", "adjustment", "adaptation", "accommodation", "compromise",
+    "settlement", "resolution", "solution", "answer", "response", "reply", "retort", "rejoinder",
+    "counter", "rebuttal", "refutation", "denial", "rejection", "refusal", "declination", "dismissal",
+    "ignore", "disregard", "overlook", "neglect", "omit", "skip", "miss", "avoid", "evade", "escape",
+    "flee", "run", "retreat", "withdraw", "recede", "regress", "revert", "return", "go back",
+    "come back", "reappear", "reemerge", "resurface", "revive", "resurrect", "reanimate", "rejuvenate",
+    "refresh", "renew", "restore", "rebuild", "reconstruct", "remake", "redo", "repeat", "reiterate",
+    "recycle", "reuse", "repurpose", "upcycle", "transform", "convert", "change", "alter", "modify",
+    "adjust", "adapt", "accommodate", "fit", "suit", "match", "correspond", "agree", "harmonize",
+    "coordinate", "synchronize", "integrate", "unify", "combine", "merge", "fuse", "blend", "mix",
+    "join", "connect", "link", "couple", "pair", "bond", "attach", "fasten", "secure", "fix",
+    "anchor", "moor", "tie", "bind", "strap", "belt", "gird", "encircle", "surround", "envelop",
+    "enclose", "contain", "hold", "carry", "bear", "support", "sustain", "maintain", "preserve",
+    "conserve", "save", "keep", "store", "stock", "stockpile", "accumulate", "amass", "collect",
+    "gather", "assemble", "congregate", "meet", "convene", "convoke", "summon", "call", "invite",
+    "request", "ask", "inquire", "question", "query", "interrogate", "examine", "probe", "investigate",
+    "research", "study", "analyze", "evaluate", "assess", "appraise", "estimate", "calculate",
+    "compute", "count", "measure", "weigh", "balance", "compare", "contrast", "differentiate",
+    "distinguish", "discriminate", "separate", "divide", "split", "part", "disconnect", "detach",
+    "disengage", "release", "free", "liberate", "emancipate", "enfranchise", "empower", "enable",
+    "allow", "permit", "authorize", "sanction", "approve", "endorse", "support", "back", "fund",
+    "finance", "sponsor", "patronize", "promote", "advertise", "market", "sell", "buy", "purchase",
+    "acquire", "obtain", "get", "receive", "accept", "take", "grab", "snatch", "seize", "capture",
+    "catch", "trap", "ensnare", "entrap", "lure", "attract", "draw", "pull", "tug", "yank", "jerk",
+    "twist", "turn", "rotate", "spin", "roll", "slide", "glide", "slip", "skip", "jump", "leap",
+    "hop", "bound", "vault", "hurdle", "clear", "pass", "cross", "traverse", "navigate", "pilot",
+    "steer", "guide", "direct", "lead", "conduct", "escort", "accompany", "attend", "follow",
+    "shadow", "pursue", "chase", "hunt", "track", "trace", "trail", "follow", "precede", "lead",
+    "guide", "direct", "manage", "administer", "oversee", "supervise", "monitor", "watch", "observe",
+    "survey", "scan", "inspect", "check", "verify", "confirm", "validate", "authenticate", "certify",
+    "guarantee", "warrant", "assure", "ensure", "insure", "protect", "guard", "defend", "shield",
+    "shelter", "cover", "hide", "conceal", "mask", "disguise", "camouflage", "deceive", "trick",
+    "fool", "dupe", "hoodwink", "bamboozle", "swindle", "cheat", "defraud", "embezzle", "steal",
+    "rob", "burgle", "loot", "plunder", "pillage", "ransack", "sack", "ravage", "devastate", "destroy",
+    "ruin", "wreck", "demolish", "annihilate", "obliterate", "eradicate", "eliminate", "remove",
+    "delete", "erase", "expunge", "efface", "blot", "cancel", "void", "nullify", "invalidate",
+    "revoke", "repeal", "rescind", "reverse", "undo", "redo", "repeat", "reiterate", "restate",
+    "rephrase", "paraphrase", "translate", "interpret", "explain", "clarify", "elucidate", "illuminate",
+    "illustrate", "exemplify", "demonstrate", "show", "prove", "verify", "confirm", "validate",
+    "substantiate", "corroborate", "authenticate", "certify", "attest", "witness", "testify",
+    "declare", "state", "assert", "affirm", "claim", "allege", "contend", "maintain", "hold",
+    "believe", "think", "feel", "sense", "perceive", "discern", "detect", "notice", "observe",
+    "watch", "see", "look", "gaze", "stare", "glance", "glimpse", "peek", "peep", "peer", "scrutinize",
+    "examine", "inspect", "survey", "scan", "study", "research", "investigate", "probe", "explore",
+    "search", "seek", "hunt", "look for", "find", "discover", "uncover", "reveal", "expose",
+    "disclose", "divulge", "leak", "spill", "tell", "inform", "notify", "advise", "apprise",
+    "acquaint", "familiarize", "educate", "teach", "instruct", "train", "coach", "mentor", "tutor",
+    "guide", "direct", "lead", "show", "demonstrate", "illustrate", "exemplify", "model", "example",
+    "sample", "specimen", "instance", "case", "occurrence", "event", "happening", "incident",
+    "episode", "affair", "matter", "issue", "topic", "subject", "theme", "motif", "idea", "concept",
+    "notion", "thought", "opinion", "view", "perspective", "standpoint", "viewpoint", "position",
+    "stance", "attitude", "belief", "conviction", "principle", "value", "ideal", "standard",
+    "criterion", "benchmark", "measure", "metric", "indicator", "signal", "sign", "symbol",
+    "token", "mark", "indication", "evidence", "proof", "confirmation", "verification", "validation",
+    "authentication", "certification", "attestation", "testimony", "witness", "statement",
+    "declaration", "affirmation", "assertion", "claim", "allegation", "contention", "argument",
+    "debate", "discussion", "dispute", "controversy", "conflict", "strife", "discord", "dissension",
+    "dissent", "disagreement", "difference", "divergence", "deviation", "variation", "change",
+    "alteration", "modification", "adjustment", "adaptation", "accommodation", "compromise",
+    "settlement", "resolution", "solution", "answer", "response", "reply", "retort", "rejoinder",
+    "counter", "rebuttal", "refutation", "denial", "rejection", "refusal", "declination", "dismissal",
+    "ignore", "disregard", "overlook", "neglect", "omit", "skip", "miss", "avoid", "evade", "escape",
+    "flee", "run", "retreat", "withdraw", "recede", "regress", "revert", "return", "go back",
+    "come back", "reappear", "reemerge", "resurface", "revive", "resurrect", "reanimate", "rejuvenate",
+    "refresh", "renew", "restore", "rebuild", "reconstruct", "remake", "redo", "repeat", "reiterate",
+    "recycle", "reuse", "repurpose", "upcycle", "transform", "convert", "change", "alter", "modify",
+    "adjust", "adapt", "accommodate", "fit", "suit", "match", "correspond", "agree", "harmonize",
+    "coordinate", "synchronize", "integrate", "unify", "combine", "merge", "fuse", "blend", "mix",
+    "join", "connect", "link", "couple", "pair", "bond", "attach", "fasten", "secure", "fix",
+    "anchor", "moor", "tie", "bind", "strap", "belt", "gird", "encircle", "surround", "envelop",
+    "enclose", "contain", "hold", "carry", "bear", "support", "sustain", "maintain", "preserve",
+    "conserve", "save", "keep", "store", "stock", "stockpile", "accumulate", "amass", "collect",
+    "gather", "assemble", "congregate", "meet", "convene", "convoke", "summon", "call", "invite",
+    "request", "ask", "inquire", "question", "query", "interrogate", "examine", "probe", "investigate",
+    "research", "study", "analyze", "evaluate", "assess", "appraise", "estimate", "calculate",
+    "compute", "count", "measure", "weigh", "balance", "compare", "contrast", "differentiate",
+    "distinguish", "discriminate", "separate", "divide", "split", "part", "disconnect", "detach",
+    "disengage", "release", "free", "liberate", "emancipate", "enfranchise", "empower", "enable",
+    "allow", "permit", "authorize", "sanction", "approve", "endorse", "support", "back", "fund",
+    "finance", "sponsor", "patronize", "promote", "advertise", "market", "sell", "buy", "purchase",
+    "acquire", "obtain", "get", "receive", "accept", "take", "grab", "snatch", "seize", "capture",
+    "catch", "trap", "ensnare", "entrap", "lure", "attract", "draw", "pull", "tug", "yank", "jerk",
+    "twist", "turn", "rotate", "spin", "roll", "slide", "glide", "slip", "skip", "jump", "leap",
+    "hop", "bound", "vault", "hurdle", "clear", "pass", "cross", "traverse", "navigate", "pilot",
+    "steer", "guide", "direct", "lead", "conduct", "escort", "accompany", "attend", "follow",
+    "shadow", "pursue", "chase", "hunt", "track", "trace", "trail", "follow", "precede", "lead",
+    "guide", "direct", "manage", "administer", "oversee", "supervise", "monitor", "watch", "observe",
+    "survey", "scan", "inspect", "check", "verify", "confirm", "validate", "authenticate", "certify",
+    "guarantee", "warrant", "assure", "ensure", "insure", "protect", "guard", "defend", "shield",
+    "shelter", "cover", "hide", "conceal", "mask", "disguise", "camouflage", "deceive", "trick",
+    "fool", "dupe", "hoodwink", "bamboozle", "swindle", "cheat", "defraud", "embezzle", "steal",
+    "rob", "burgle", "loot", "plunder", "pillage", "ransack", "sack", "ravage", "devastate", "destroy",
+    "ruin", "wreck", "demolish", "annihilate", "obliterate", "eradicate", "eliminate", "remove",
+    "delete", "erase", "expunge", "efface", "blot", "cancel", "void", "nullify", "invalidate",
+    "revoke", "repeal", "rescind", "reverse", "undo", "redo", "repeat", "reiterate", "restate",
+    "rephrase", "paraphrase", "translate", "interpret", "explain", "clarify", "elucidate", "illuminate",
+    "illustrate", "exemplify", "demonstrate", "show", "prove", "verify", "confirm", "validate",
+    "substantiate", "corroborate", "authenticate", "certify", "attest", "witness", "testify",
+    "declare", "state", "assert", "affirm", "claim", "allege", "contend", "maintain", "hold",
+    "believe", "think", "feel", "sense", "perceive", "discern", "detect", "notice", "observe",
+    "watch", "see", "look", "gaze", "stare", "glance", "glimpse", "peek", "peep", "peer", "scrutinize",
+    "examine", "inspect", "survey", "scan", "study", "research", "investigate", "probe", "explore",
+    "search", "seek", "hunt", "look for", "find", "discover", "uncover", "reveal", "expose",
+    "disclose", "divulge", "leak", "spill", "tell", "inform", "notify", "advise", "apprise",
+    "acquaint", "familiarize", "educate", "teach", "instruct", "train", "coach", "mentor", "tutor",
+    "guide", "direct", "lead", "show", "demonstrate", "illustrate", "exemplify", "model", "example",
+    "sample", "specimen", "instance", "case", "occurrence", "event", "happening", "incident",
+    "episode", "affair", "matter", "issue", "topic", "subject", "theme", "motif", "idea", "concept",
+    "notion", "thought", "opinion", "view", "perspective", "standpoint", "viewpoint", "position",
+    "stance", "attitude", "belief", "conviction", "principle", "value", "ideal", "standard",
+    "criterion", "benchmark", "measure", "metric", "indicator", "signal", "sign", "symbol",
+    "token", "mark", "indication", "evidence", "proof", "confirmation", "verification", "validation",
+    "authentication", "certification", "attestation", "testimony", "witness", "statement",
+    "declaration", "affirmation", "assertion", "claim", "allegation", "contention", "argument",
+    "debate", "discussion", "dispute", "controversy", "conflict", "strife", "discord", "dissension",
+    "dissent", "disagreement", "difference", "divergence", "deviation", "variation", "change",
+    "alteration", "modification", "adjustment", "adaptation", "accommodation", "compromise",
+    "settlement", "resolution", "solution", "answer", "response", "reply", "retort", "rejoinder",
+    "counter", "rebuttal", "refutation", "denial", "rejection", "refusal", "declination", "dismissal",
+    "ignore", "disregard", "overlook", "neglect", "omit", "skip", "miss", "avoid", "evade", "escape",
+    "flee", "run", "retreat", "withdraw", "recede", "regress", "revert", "return", "go back",
+    "come back", "reappear", "reemerge", "resurface", "revive", "resurrect", "reanimate", "rejuvenate",
+    "refresh", "renew", "restore", "rebuild", "reconstruct", "remake", "redo", "repeat", "reiterate",
+    "recycle", "reuse", "repurpose", "upcycle", "transform", "convert", "change", "alter", "modify",
+    "adjust", "adapt", "accommodate", "fit", "suit", "match", "correspond", "agree", "harmonize",
+    "coordinate", "synchronize", "integrate", "unify", "combine", "merge", "fuse", "blend", "mix",
+    "join", "connect", "link", "couple", "pair", "bond", "attach", "fasten", "secure", "fix",
+    "anchor", "moor", "tie", "bind", "strap", "belt", "gird", "encircle", "surround", "envelop",
+    "enclose", "contain", "hold", "carry", "bear", "support", "sustain", "maintain", "preserve",
+    "conserve", "save", "keep", "store", "stock", "stockpile", "accumulate", "amass", "collect",
+    "gather", "assemble", "congregate", "meet", "convene", "convoke", "summon", "call", "invite",
+    "request", "ask", "inquire", "question", "query", "interrogate", "examine", "probe", "investigate",
+    "research", "study", "analyze", "evaluate", "assess", "appraise", "estimate", "calculate",
+    "compute", "count", "measure", "weigh", "balance", "compare", "contrast", "differentiate",
+    "distinguish", "discriminate", "separate", "divide", "split", "part", "disconnect", "detach",
+    "disengage", "release", "free", "liberate", "emancipate", "enfranchise", "empower", "enable",
+    "allow", "permit", "authorize", "sanction", "approve", "endorse", "support", "back", "fund",
+    "finance", "sponsor", "patronize", "promote", "advertise", "market", "sell", "buy", "purchase",
+    "acquire", "obtain", "get", "receive", "accept", "take", "grab", "snatch", "seize", "capture",
+    "catch", "trap", "ensnare", "entrap", "lure", "attract", "draw", "pull", "tug", "yank", "jerk",
+    "twist", "turn", "rotate", "spin", "roll", "slide", "glide", "slip", "skip", "jump", "leap",
+    "hop", "bound", "vault", "hurdle", "clear", "pass", "cross", "traverse", "navigate", "pilot",
+    "steer", "guide", "direct", "lead", "conduct", "escort", "accompany", "attend", "follow",
+    "shadow", "pursue", "chase", "hunt", "track", "trace", "trail", "follow", "precede", "lead",
+    "guide", "direct", "manage", "administer", "oversee", "supervise", "monitor", "watch", "observe",
+    "survey", "scan", "inspect", "check", "verify", "confirm", "validate", "authenticate", "certify",
+    "guarantee", "warrant", "assure", "ensure", "insure", "protect", "guard", "defend", "shield",
+    "shelter", "cover", "hide", "conceal", "mask", "disguise", "camouflage", "deceive", "trick",
+    "fool", "dupe", "hoodwink", "bamboozle", "swindle", "cheat", "defraud", "embezzle", "steal",
+    "rob", "burgle", "loot", "plunder", "pillage", "ransack", "sack", "ravage", "devastate", "destroy",
+    "ruin", "wreck", "demolish", "annihilate", "obliterate", "eradicate", "eliminate", "remove",
+    "delete", "erase", "expunge", "efface", "blot", "cancel", "void", "nullify", "invalidate",
+    "revoke", "repeal", "rescind", "reverse", "undo", "redo", "repeat", "reiterate", "restate",
+    "rephrase", "paraphrase", "translate", "interpret", "explain", "clarify", "elucidate", "illuminate",
+    "illustrate", "exemplify", "demonstrate", "show", "prove", "verify", "confirm", "validate",
+    "substantiate", "corroborate", "authenticate", "certify", "attest", "witness", "testify",
+    "declare", "state", "assert", "affirm", "claim", "allege", "contend", "maintain", "hold",
+    "believe", "think", "feel", "sense", "perceive", "discern", "detect", "notice", "observe",
+    "watch", "see", "look", "gaze", "stare", "glance", "glimpse", "peek", "peep", "peer", "scrutinize",
+    "examine", "inspect", "survey", "scan", "study", "research", "investigate", "probe", "explore",
+    "search", "seek", "hunt", "look for", "find", "discover", "uncover", "reveal", "expose",
+    "disclose", "divulge", "leak", "spill", "tell", "inform", "notify", "advise", "apprise",
+    "acquaint", "familiarize", "educate", "teach", "instruct", "train", "coach", "mentor", "tutor",
+    "guide", "direct", "lead", "show", "demonstrate", "illustrate", "exemplify", "model", "example",
+    "sample", "specimen", "instance", "case", "occurrence", "event", "happening", "incident",
+    "episode", "affair", "matter", "issue", "topic", "subject", "theme", "motif", "idea", "concept",
+    "notion", "thought", "opinion", "view", "perspective", "standpoint", "viewpoint", "position",
+    "stance", "attitude", "belief", "conviction", "principle", "value", "ideal", "standard",
+    "criterion", "benchmark", "measure", "metric", "indicator", "signal", "sign", "symbol",
+    "token", "mark", "indication", "evidence", "proof", "confirmation", "verification", "validation",
+    "authentication", "certification", "attestation", "testimony", "witness", "statement",
+    "declaration", "affirmation", "assertion", "claim", "allegation", "contention", "argument",
+    "debate", "discussion", "dispute", "controversy", "conflict", "strife", "discord", "dissension",
+    "dissent", "disagreement", "difference", "divergence", "deviation", "variation", "change",
+    "alteration", "modification", "adjustment", "adaptation", "accommodation", "compromise",
+    "settlement", "resolution", "solution", "answer", "response", "reply", "retort", "rejoinder",
+    "counter", "rebuttal", "refutation", "denial", "rejection", "refusal", "declination", "dismissal",
+    "ignore", "disregard", "overlook", "neglect", "omit", "skip", "miss", "avoid", "evade", "escape",
+    "flee", "run", "retreat", "withdraw", "recede", "regress", "revert", "return", "go back",
+    "come back", "reappear", "reemerge", "resurface", "revive", "resurrect", "reanimate", "rejuvenate",
+    "refresh", "renew", "restore", "rebuild", "reconstruct", "remake", "redo", "repeat", "reiterate",
+    "recycle", "reuse", "repurpose", "upcycle", "transform", "convert", "change", "alter", "modify",
+    "adjust", "adapt", "accommodate", "fit", "suit", "match", "correspond", "agree", "harmonize",
+    "coordinate", "synchronize", "integrate", "unify", "combine", "merge", "fuse", "blend", "mix",
+    "join", "connect", "link", "couple", "pair", "bond", "attach", "fasten", "secure", "fix",
+    "anchor", "moor", "tie", "bind", "strap", "belt", "gird", "encircle", "surround", "envelop",
+    "enclose", "contain", "hold", "carry", "bear", "support", "sustain", "maintain", "preserve",
+    "conserve", "save", "keep", "store", "stock", "stockpile", "accumulate", "amass", "collect",
+    "gather", "assemble", "congregate", "meet", "convene", "convoke", "summon", "call", "invite",
+    "request", "ask", "inquire", "question", "query", "interrogate", "examine", "probe", "investigate",
+    "research", "study", "analyze", "evaluate", "assess", "appraise", "estimate", "calculate",
+    "compute", "count", "measure", "weigh", "balance", "compare", "contrast", "differentiate",
+    "distinguish", "discriminate", "separate", "divide", "split", "part", "disconnect", "detach",
+    "disengage", "release", "free", "liberate", "emancipate", "enfranchise", "empower", "enable",
+    "allow", "permit", "authorize", "sanction", "approve", "endorse", "support", "back", "fund",
+    "finance", "sponsor", "patronize", "promote", "advertise", "market", "sell", "buy", "purchase",
+    "acquire", "obtain", "get", "receive", "accept", "take", "grab", "snatch", "seize", "capture",
+    "catch", "trap", "ensnare", "entrap", "lure", "attract", "draw", "pull", "tug", "yank", "jerk",
+    "twist", "turn", "rotate", "spin", "roll", "slide", "glide", "slip", "skip", "jump", "leap",
+    "hop", "bound", "vault", "hurdle", "clear", "pass", "cross", "traverse", "navigate", "pilot",
+    "steer", "guide", "direct", "lead", "conduct", "escort", "accompany", "attend", "follow",
+    "shadow", "pursue", "chase", "hunt", "track", "trace", "trail", "follow", "precede", "lead",
+    "guide", "direct", "manage", "administer", "oversee", "supervise", "monitor", "watch", "observe",
+    "survey", "scan", "inspect", "check", "verify", "confirm", "validate", "authenticate", "certify",
+    "guarantee", "warrant", "assure", "ensure", "insure", "protect", "guard", "defend", "shield",
+    "shelter", "cover", "hide", "conceal", "mask", "disguise", "camouflage", "deceive", "trick",
+    "fool", "dupe", "hoodwink", "bamboozle", "swindle", "cheat", "defraud", "embezzle", "steal",
+    "rob", "burgle", "loot", "plunder", "pillage", "ransack", "sack", "ravage", "devastate", "destroy",
+    "ruin", "wreck", "demolish", "annihilate", "obliterate", "eradicate", "eliminate", "remove",
+    "delete", "erase", "expunge", "efface", "blot", "cancel", "void", "nullify", "invalidate",
+    "revoke", "repeal", "rescind", "reverse", "undo", "redo", "repeat", "reiterate", "restate",
+    "rephrase", "paraphrase", "translate", "interpret", "explain", "clarify", "elucidate", "illuminate",
+    "illustrate", "exemplify", "demonstrate", "show", "prove", "verify", "confirm", "validate",
+    "substantiate", "corroborate", "authenticate", "certify", "attest", "witness", "testify",
+    "declare", "state", "assert", "affirm", "claim", "allege", "contend", "maintain", "hold",
+    "believe", "think", "feel", "sense", "perceive", "discern", "detect", "notice", "observe",
+    "watch", "see", "look", "gaze", "stare", "glance", "glimpse", "peek", "peep", "peer", "scrutinize",
+    "examine", "inspect", "survey", "scan", "study", "research", "investigate", "probe", "explore",
+    "search", "seek", "hunt", "look for", "find", "discover", "uncover", "reveal", "expose",
+    "disclose", "divulge", "leak", "spill", "tell", "inform", "notify", "advise", "apprise",
+    "acquaint", "familiarize", "educate", "teach", "instruct", "train", "coach", "mentor", "tutor",
+    "guide", "direct", "lead", "show", "demonstrate", "illustrate", "exemplify", "model", "example",
+    "sample", "specimen", "instance", "case", "occurrence", "event", "happening", "incident",
+    "episode", "affair", "matter", "issue", "topic", "subject", "theme", "motif", "idea", "concept",
+    "notion", "thought", "opinion", "view", "perspective", "standpoint", "viewpoint", "position",
+    "stance", "attitude", "belief", "conviction", "principle", "value", "ideal", "standard",
+    "criterion", "benchmark", "measure", "metric", "indicator", "signal", "sign", "symbol",
+    "token", "mark", "indication", "evidence", "proof", "confirmation", "verification", "validation",
+    "authentication", "certification", "attestation", "testimony", "witness", "statement",
+    "declaration", "affirmation", "assertion", "claim", "allegation", "contention", "argument",
+    "debate", "discussion", "dispute", "controversy", "conflict", "strife", "discord", "dissension",
+    "dissent", "disagreement", "difference", "divergence", "deviation", "variation", "change",
+    "alteration", "modification", "adjustment", "adaptation", "accommodation", "compromise",
+    "settlement", "resolution", "solution", "answer", "response", "reply", "retort", "rejoinder",
+    "counter", "rebuttal", "refutation", "denial", "rejection", "refusal", "declination", "dismissal",
+    "ignore", "disregard", "overlook", "neglect", "omit", "skip", "miss", "avoid", "evade", "escape",
+    "flee", "run", "retreat", "withdraw", "recede", "regress", "revert", "return", "go back",
+    "come back", "reappear", "reemerge", "resurface", "revive", "resurrect", "reanimate", "rejuvenate",
+    "refresh", "renew", "restore", "rebuild", "reconstruct", "remake", "redo", "repeat", "reiterate",
+    "recycle", "reuse", "repurpose", "upcycle", "transform", "convert", "change", "alter", "modify",
+    "adjust", "adapt", "accommodate", "fit", "suit", "match", "correspond", "agree", "harmonize",
+    "coordinate", "synchronize", "integrate", "unify", "combine", "merge", "fuse", "blend", "mix",
+    "join", "connect", "link", "couple", "pair", "bond", "attach", "fasten", "secure", "fix",
+    "anchor", "moor", "tie", "bind", "strap", "belt", "gird", "encircle", "surround", "envelop",
+    "enclose", "contain", "hold", "carry", "bear", "support", "sustain", "maintain", "preserve",
+    "conserve", "save", "keep", "store", "stock", "stockpile", "accumulate", "amass", "collect",
+    "gather", "assemble", "congregate", "meet", "convene", "convoke", "summon", "call", "invite",
+    "request", "ask", "inquire", "question", "query", "interrogate", "examine", "probe", "investigate",
+    "research", "study", "analyze", "evaluate", "assess", "appraise", "estimate", "calculate",
+    "compute", "count", "measure", "weigh", "balance", "compare", "contrast", "differentiate",
+    "distinguish", "discriminate", "separate", "divide", "split", "part", "disconnect", "detach",
+    "disengage", "release", "free", "liberate", "emancipate", "enfranchise", "empower", "enable",
+    "allow", "permit", "authorize", "sanction", "approve", "endorse", "support", "back", "fund",
+    "finance", "sponsor", "patronize", "promote", "advertise", "market", "sell", "buy", "purchase",
+    "acquire", "obtain", "get", "receive", "accept", "take", "grab", "snatch", "seize", "capture",
+    "catch", "trap", "ensnare", "entrap", "lure", "attract", "draw", "pull", "tug", "yank", "jerk",
+    "twist", "turn", "rotate", "spin", "roll", "slide", "glide", "slip", "skip", "jump", "leap",
+    "hop", "bound", "vault", "hurdle", "clear", "pass", "cross", "traverse", "navigate", "pilot",
+    "steer", "guide", "direct", "lead", "conduct", "escort", "accompany", "attend", "follow",
+    "shadow", "pursue", "chase", "hunt", "track", "trace", "trail", "follow", "precede", "lead",
+    "guide", "direct", "manage", "administer", "oversee", "supervise", "monitor", "watch", "observe",
+    "survey", "scan", "inspect", "check", "verify", "confirm", "validate", "authenticate", "certify",
+    "guarantee", "warrant", "assure", "ensure", "insure", "protect", "guard", "defend", "shield",
+    "shelter", "cover", "hide", "conceal", "mask", "disguise", "camouflage", "deceive", "trick",
+    "fool", "dupe", "hoodwink", "bamboozle", "swindle", "cheat", "defraud", "embezzle", "steal",
+    "chopped", "diced", "minced", "sliced", "grated", "shredded", "crushed", "mashed",
+    "cubed", "julienned", "whole", "peeled", "seeded", "cored", "divided", "softened",
+    "melted", "cooled", "warmed", "to taste", "optional", "fresh", "dried", "ground",
+    "powdered", "toasted", "roasted", "raw", "cooked", "canned", "frozen", "thawed",
+    "packed", "light", "dark", "unsalted", "salted", "low-fat", "full-fat", "non-fat",
+    "finely", "coarsely", "roughly", "thinly", "thickly", "freshly", "newly", "recently",
+    "cold", "warm", "hot", "room temperature", "chilled", "frozen", "thawed", "defrosted",
+    "washed", "cleaned", "trimmed", "cut", "sliced", "diced", "chopped", "minced", "grated",
+    "shredded", "crushed", "mashed", "pureed", "blended", "whipped", "beaten", "stirred",
+    "mixed", "combined", "kneaded", "rolled", "folded", "sifted", "strained", "drained",
+    "rinsed", "soaked", "marinated", "seasoned", "flavored", "spiced", "herbed", "salted",
+    "peppered", "sugared", "sweetened", "soured", "bittered", "umami", "savory", "sweet",
+    "sour", "bitter", "salty", "spicy", "hot", "mild", "bland", "rich", "poor", "good",
+    "bad", "nice", "great", "excellent", "perfect", "ideal", "wonderful", "fantastic",
+    "amazing", "awesome", "terrible", "horrible", "awful", "disgusting", "delicious",
+    "tasty", "yummy", "scrumptious", "delectable", "mouthwatering", "appetizing",
+    "flavorful", "flavourful", "aromatic", "fragrant", "pungent", "strong", "weak",
+    "mild", "bland", "insipid", "tasteless", "flavorless", "flavourless", "boring"
+]
+
+
+# Ingredient introduction phrases
+INGREDIENT_INTRO_PHRASES = [
+    "you'll need", "you will need", "we need", "we'll need", "ingredients are",
+    "ingredients include", "you need", "going to need", "gonna need", "we're using",
+    "we are using", "using", "taking", "grabbing", "get", "start with",
+    "first ingredient", "next ingredient", "also need", "also using", "add in",
+    "for this recipe", "recipe calls for"
+]
+
+# Cooking instruction words to filter out
+COOKING_INSTRUCTION_WORDS = [
+    # Cooking verbs
+    "add", "mix", "stir", "combine", "whisk", "beat", "blend", "pour", "heat", "cook",
+    "fry", "sauté", "saute", "bake", "roast", "grill", "broil", "boil", "simmer", 
+    "steam", "poach", "braise", "stew", "marinate", "season", "taste", "serve",
+    "garnish", "plate", "finish", "drizzle", "sprinkle", "fold", "knead", "roll",
+    "chop", "dice", "slice", "mince", "grate", "shred", "peel", "core", "seed",
+    
+    # Kitchen equipment
+    "pan", "pot", "skillet", "saucepan", "dutch oven", "oven", "stove", "stovetop",
+    "microwave", "blender", "mixer", "processor", "food processor", "bowl", "mixing bowl",
+    "cutting board", "knife", "whisk", "spatula", "spoon", "fork", "plate", "dish",
+    "baking sheet", "baking dish", "casserole", "slow cooker", "pressure cooker",
+    
+    # Time and temperature
+    "minutes", "minute", "hours", "hour", "seconds", "second", "degrees", "fahrenheit",
+    "celsius", "temperature", "hot", "warm", "cool", "cold", "boiling", "simmering",
+    "preheated", "preheat", "timer", "until", "while", "after", "before", "when",
+    
+    # Cooking instructions
+    "let it", "let's", "now", "then", "next", "after that", "finally", "lastly",
+    "meanwhile", "while that's", "once", "as soon as", "make sure", "be careful",
+    "don't", "do not", "keep", "continue", "repeat", "turn", "flip", "remove",
+    "take out", "put in", "place", "set aside", "cover", "uncover", "wrap"
+]
+
+# Create patterns
+UNITS_PATTERN = r'\b(' + r'|'.join([re.escape(u) for u in UNIT_TOKENS]) + r')\b'
+PREP_PATTERN = r'\b(' + r'|'.join([re.escape(p) for p in PREP_TERMS]) + r')\b'
+
+def clean_vtt_text_to_lines(vtt_text: str):
+    """Extract and clean text lines from VTT subtitle file."""
+    text = vtt_text
+
+    # Remove WEBVTT header
+    text = re.sub(r'^\s*WEBVTT.*\n', '', text, flags=re.IGNORECASE)
+
+    # Remove STYLE or NOTE blocks
+    text = re.sub(r'(?:STYLE|NOTE).*?(?:\n\n|$)', '', text, flags=re.DOTALL | re.IGNORECASE)
+
+    # Remove cue timestamp lines
+    text = re.sub(r'^\s*\d{2}:\d{2}:\d{2}(?:\.\d+)?\s*-->\s*\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:.*)?\s*$',
+                  '', text, flags=re.MULTILINE)
+
+    # Remove angle-bracket pieces but keep text content
+    text = re.sub(r'<[^>]+>', '', text)
+
+    # Remove leftover numeric-only lines and blank lines
+    lines = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        if re.fullmatch(r'\d+', ln):
+            continue
+        
+        # Normalize whitespace
+        ln = re.sub(r'\s+', ' ', ln)
+        lines.append(ln)
+
+    # Deduplicate while preserving order
+    seen = set()
+    dedup = []
+    for l in lines:
+        key = l.lower().strip()
+        if key not in seen:
+            seen.add(key)
+            dedup.append(l)
+            
+    return dedup
+
+def normalize_ingredient_name(ingredient_name):
+    """Normalize ingredient name for better deduplication."""
+    if not ingredient_name:
+        return ""
+    
+    # Convert to lowercase
+    normalized = ingredient_name.lower().strip()
+    
+    # Remove punctuation and extra spaces
+    normalized = re.sub(r'[^\w\s]', '', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized)
+    
+    # Remove common variations and synonyms
+    synonyms = {
+        'green onions': 'scallions',
+        'spring onions': 'scallions', 
+        'garbanzo beans': 'chickpeas',
+        'cilantro': 'coriander',
+        'heavy cream': 'cream',
+        'whipping cream': 'cream',
+        'ground beef': 'beef',
+        'ground chicken': 'chicken',
+        'ground pork': 'pork',
+        'sea salt': 'salt',
+        'kosher salt': 'salt',
+        'table salt': 'salt',
+        'black pepper': 'pepper',
+        'white pepper': 'pepper',
+        'ground pepper': 'pepper',
+        'extra virgin olive oil': 'olive oil',
+        'virgin olive oil': 'olive oil'
+    }
+    
+    # Replace synonyms
+    for synonym, canonical in synonyms.items():
+        if synonym in normalized:
+            normalized = normalized.replace(synonym, canonical)
+    
+    # Handle plural/singular forms
+    if normalized.endswith('s') and len(normalized) > 3:
+        singular = normalized[:-1]
+        # Check if singular form exists in our ingredient list
+        if any(singular in ing for ing in COMMON_INGREDIENT_WORDS):
+            normalized = singular
+    
+    return normalized.strip()
+
+def is_ingredient_line(line):
+    """Ultra-strict determination if a line contains ingredients."""
+    line_lower = line.lower().strip()
+    words = line_lower.split()
+    
+    # Skip empty lines or very short lines
+    if not line_lower or len(words) == 0:
+        return False
+    
+    # Skip very long lines (likely instructions)
+    if len(words) > 10:
+        return False
+    
+    # Immediate rejection blacklist - if ANY of these appear, reject the line
+    absolute_blacklist = [
+        # Cooking actions
+        "preheat", "bake", "fry", "cook", "stir", "mix", "combine", "whisk", "beat",
+        "blend", "pour", "heat", "saute", "simmer", "boil", "roast", "grill", "add",
+        "season", "marinate", "serve", "garnish", "plate", "finish", "drizzle",
+        
+        # Time/temperature
+        "minutes", "minute", "hours", "hour", "degrees", "fahrenheit", "celsius", 
+        "temperature", "timer", "until", "while", "after", "before", "when",
+        
+        # Equipment
+        "pan", "pot", "skillet", "bowl", "plate", "dish", "oven", "stove", "microwave",
+        "blender", "mixer", "processor", "cutting board", "knife",
+        
+        # Instructions
+        "step", "recipe", "method", "instructions", "preparation", "cooking",
+        "then", "next", "now", "first", "second", "finally", "meanwhile",
+        "let's", "we're", "you'll", "make sure", "be careful", "don't forget",
+        
+        # Video/channel words
+        "video", "channel", "subscribe", "like", "comment", "today", "hello", "welcome",
+        
+        # Non-food words
+        "kitchen", "chef", "restaurant", "home", "house", "table", "dinner", "lunch"
+    ]
+    
+    # If line contains ANY blacklisted word, reject immediately
+    for word in absolute_blacklist:
+        if word in line_lower:
+            return False
+    
+    # Must contain at least one actual ingredient word
+    ingredient_found = False
+    for ingredient in COMMON_INGREDIENT_WORDS:
+        if re.search(r'\b' + re.escape(ingredient) + r'\b', line_lower):
+            ingredient_found = True
+            break
+    
+    if not ingredient_found:
+        return False
+    
+    # Must have quantity/measurement indicators
+    has_quantity_indicator = False
+    
+    # Check for units
+    if re.search(UNITS_PATTERN, line_lower):
+        has_quantity_indicator = True
+    
+    # Check for numbers or word quantities
+    quantity_indicators = [
+        r'\b\d+(?:\.\d+)?\b',  # Numbers
+        r'\b\d+/\d+\b',  # Fractions
+        r'\b(one|two|three|four|five|six|seven|eight|nine|ten)\b',  # Word numbers
+        r'\b(a|an|some|few|several)\b'  # Indefinite quantities
+    ]
+    
+    for pattern in quantity_indicators:
+        if re.search(pattern, line_lower):
+            has_quantity_indicator = True
+            break
+    
+    # Check for ingredient introduction phrases
+    ingredient_intros = [
+        "need", "using", "add", "ingredients", "calls for", "recipe"
+    ]
+    
+    has_intro = any(intro in line_lower for intro in ingredient_intros)
+    
+    # Must have BOTH ingredient AND (quantity OR intro phrase)
+    return ingredient_found and (has_quantity_indicator or has_intro)
+
+
+def parse_quantity(qty_str):
+    """Parse quantity string to handle fractions, decimals, and ranges."""
+    if not qty_str:
+        return ""
+        
+    qty_str = qty_str.strip().lower()
+    
+    # Handle word numbers
+    word_to_num = {
+        'a': '1', 'an': '1', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+        'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+        'half': '0.5', 'quarter': '0.25', 'some': '', 'few': '2-3', 'several': '3-4'
+    }
+    
+    if qty_str in word_to_num:
+        return word_to_num[qty_str]
+    
+    # Handle ranges like "1-2" or "1 to 2"
+    if re.match(r'^\d+\s*[-–—]\s*\d+$', qty_str) or re.match(r'^\d+\s+to\s+\d+$', qty_str):
+        return qty_str
+        
+    # Handle fractions
+    if '/' in qty_str:
+        try:
+            # Handle mixed numbers like "1 1/2"
+            if ' ' in qty_str and not qty_str.startswith('/'):
+                parts = qty_str.split()
+                if len(parts) == 2:
+                    whole, fraction = parts
+                    whole_value = float(whole)
+                    fraction_value = float(Fraction(fraction))
+                    return str(whole_value + fraction_value)
+            else:
+                # Handle simple fractions
+                return str(float(Fraction(qty_str)))
+        except:
+            return qty_str
+            
+    # Handle decimals
+    try:
+        return str(float(qty_str))
+    except:
+        return qty_str
+
+def extract_ingredients_from_line(line):
+    """Extract ONE validated ingredient from a line."""
+    line = line.strip()
+    line_lower = line.lower()
+    
+    # Additional safety check - reject lines with instruction words
+    instruction_reject_words = [
+        "cook", "bake", "fry", "heat", "stir", "mix", "add", "combine", "season",
+        "minute", "degree", "temperature", "recipe", "step", "method", "then", "next",
+        "oven", "pan", "pot", "bowl", "until", "while", "preheat", "serve"
+    ]
+    
+    for word in instruction_reject_words:
+        if word in line_lower:
+            return []
+    
+    # Find the FIRST and MOST LIKELY ingredient in the line
+    best_ingredient = None
+    best_score = 0
+    best_position = len(line)
+    
+    for ingredient in COMMON_INGREDIENT_WORDS:
+        # Look for exact word matches
+        pattern = r'\b' + re.escape(ingredient) + r'\b'
+        match = re.search(pattern, line_lower)
+        
+        if match:
+            # Score this ingredient based on:
+            # 1. Position in line (earlier is better)
+            # 2. Length of ingredient word (longer/more specific is better)
+            score = len(ingredient) - (match.start() / 10)  # Position penalty
+            
+            if score > best_score and match.start() < best_position:
+                best_ingredient = ingredient
+                best_score = score
+                best_position = match.start()
+    
+    if not best_ingredient:
+        return []
+    
+    # Extract context around the best ingredient
+    ingredient_start = best_position
+    before_ingredient = line[:ingredient_start].strip()
+    after_match = line[ingredient_start + len(best_ingredient):].strip()
+    
+    # Build the full ingredient name
+    ingredient_name = best_ingredient
+    
+    # Add descriptive words that come after (but be selective)
+    if after_match:
+        # Only take the first few words and avoid prep terms
+        after_words = after_match.split()[:3]  # Max 3 words
+        valid_after_words = []
+        
+        for word in after_words:
+            word_clean = re.sub(r'[^\w]', '', word.lower())
+            # Skip if it's a prep term or instruction word
+            if (word_clean not in [prep.lower() for prep in PREP_TERMS] and 
+                word_clean not in instruction_reject_words and
+                len(word_clean) > 1):
+                valid_after_words.append(word)
+            else:
+                break  # Stop at first invalid word
+        
+        if valid_after_words:
+            ingredient_name = best_ingredient + " " + " ".join(valid_after_words)
+    
+    # Extract quantity and unit from before the ingredient
+    quantity = ""
+    unit = ""
+    
+    # Look for quantity patterns (rightmost first)
+    qty_patterns = [
+        (r'(\d+(?:\.\d+)?(?:\s*[-–—]\s*\d+(?:\.\d+)?)?)\s*$', 'number'),
+        (r'(\d+/\d+|\d+\s+\d+/\d+)\s*$', 'fraction'),
+        (r'(one|two|three|four|five|six|seven|eight|nine|ten|a|an|some|few|several)\s*$', 'word')
+    ]
+    
+    for pattern, qty_type in qty_patterns:
+        match = re.search(pattern, before_ingredient, re.IGNORECASE)
+        if match:
+            quantity = match.group(1)
+            # Remove quantity to look for unit
+            before_ingredient = before_ingredient[:match.start()].strip()
+            break
+    
+    # Look for unit
+    unit_match = re.search(UNITS_PATTERN + r'\s*$', before_ingredient, re.IGNORECASE)
+    if unit_match:
+        unit = unit_match.group().strip()
+    
+    # Clean up ingredient name
+    ingredient_name = re.sub(r'\s*\([^)]*\)', '', ingredient_name)  # Remove parentheses
+    ingredient_name = re.sub(r'\s*,.*$', '', ingredient_name)  # Remove after comma
+    ingredient_name = re.sub(r'[^\w\s-]+$', '', ingredient_name)  # Remove punctuation
+    ingredient_name = ingredient_name.strip().title()
+    
+    # Final validation - must be a real ingredient
+    if not is_definitely_ingredient(ingredient_name):
+        return []
+    
+    return [{
+        "quantity": parse_quantity(quantity) if quantity else "",
+        "unit": unit,
+        "ingredient": ingredient_name
+    }]
+
+def advanced_ingredient_deduplication(ingredients):
+    """Remove duplicates using strict matching."""
+    if not ingredients:
+        return []
+    
+    seen_normalized = set()
+    final_ingredients = []
+    
+    for ingredient in ingredients:
+        # Create normalized key
+        name = ingredient["ingredient"].lower().strip()
+        
+        # Remove common variations
+        name = re.sub(r'\s+', ' ', name)  # Normalize spaces
+        name = re.sub(r'\b(fresh|dried|ground|chopped|diced|sliced)\b', '', name)  # Remove descriptors
+        name = name.strip()
+        
+        # Handle singular/plural
+        singular = name.rstrip('s') if name.endswith('s') and len(name) > 3 else name
+        plural = name + 's' if not name.endswith('s') else name
+        
+        # Check if we've seen this ingredient (or its variations)
+        if name in seen_normalized or singular in seen_normalized or plural in seen_normalized:
+            continue
+        
+        # Add all variations to seen set
+        seen_normalized.add(name)
+        seen_normalized.add(singular)
+        seen_normalized.add(plural)
+        
+        final_ingredients.append(ingredient)
+    
+    return final_ingredients
+
+def is_valid_ingredient(text):
+    """Check if text is likely a valid ingredient and not an instruction or other text."""
+    text_lower = text.lower().strip()
+    
+    if not text_lower or len(text_lower) < 2:
+        return False
+    
+    words = text_lower.split()
+    
+    # Skip if it's just common excluded words
+    if len(words) == 1 and words[0] in EXCLUDE_WORDS:
+        return False
+        
+    # Skip if it contains mostly excluded words (more than 60%)
+    excluded_count = sum(1 for word in words if word in EXCLUDE_WORDS)
+    if len(words) > 0 and excluded_count / len(words) > 0.6:
+        return False
+     
+    # Skip if it's clearly an instruction (contains action verbs)
+    instruction_indicators = [
+        r'\b(add|mix|stir|combine|whisk|beat|blend|pour|heat|fry|bake|roast|grill|boil|simmer|saute|preheat|serve|garnish|season|marinate)\b',
+        r'\b(until|while|after|before|then|next|now|let\'s|we\'re|you can|you\'ll|should|would|could|please)\b',
+        r'\b(recipe|method|instructions|step|direction|cooking|preparation)\b',
+        r'\b(pan|pot|skillet|bowl|oven|stove|microwave|blender|mixer|processor)\b',
+        r'\b(degree|fahrenheit|celsius|minutes|hours|seconds|timer)\b',
+        r'\b(preheat|cook for|bake for|fry for|until golden|until tender)\b'
+    ]
+    
+    for pattern in instruction_indicators:
+        if re.search(pattern, text_lower):
+            return False
+    
+    # Must contain at least one known ingredient word
+    contains_known_ingredient = False
+    for ingredient in COMMON_INGREDIENT_WORDS:
+        if re.search(r'\b' + re.escape(ingredient) + r'\b', text_lower):
+            contains_known_ingredient = True
+            break
+    
+    if not contains_known_ingredient:
+        return False
+    
+    # Additional checks for common non-ingredient patterns
+    non_ingredient_patterns = [
+        r'\b(how to|recipe for|cooking|preparation|method)\b',
+        r'\b(channel|video|subscribe|like|comment)\b',
+        r'\b(today|yesterday|tomorrow|week|month|year)\b',
+        r'\b(hello|hi|welcome|thanks|thank you)\b'
+    ]
+    
+    for pattern in non_ingredient_patterns:
+        if re.search(pattern, text_lower):
+            return False
+        
+    return True
+
+def remove_exact_duplicates(ingredients):
+    """Remove exact duplicates based on ingredient name (case-insensitive)."""
+    seen = set()
+    unique_ingredients = []
+    
+    for ingredient in ingredients:
+        # Create a key based on the normalized ingredient name
+        key = ingredient["ingredient"].lower().strip()
+        
+        if key not in seen:
+            seen.add(key)
+            unique_ingredients.append(ingredient)
+    
+    return unique_ingredients
+
+
+def extract_structured_ingredients(lines):
+    """Extract ingredients with maximum filtering."""
+    all_ingredients = []
+    processed_ingredients = set()
+    
+    for line in lines:
+        # Very strict line filtering
+        if not is_ingredient_line(line):
+            continue
+        
+        # Extract ingredient
+        ingredients = extract_ingredients_from_line(line)
+        
+        if ingredients:
+            ingredient = ingredients[0]
+            ingredient_key = ingredient["ingredient"].lower().strip()
+            
+            # Skip if already seen
+            if ingredient_key in processed_ingredients:
+                continue
+            
+            # Skip if too similar to existing
+            if any(ingredient_key in existing or existing in ingredient_key 
+                   for existing in processed_ingredients):
+                continue
+            
+            processed_ingredients.add(ingredient_key)
+            all_ingredients.append(ingredient)
+    
+    # Apply final validation
+    validated_ingredients = final_ingredient_validation(all_ingredients)
+    
+    # Final deduplication
+    return advanced_ingredient_deduplication(validated_ingredients)
+
+def is_definitely_ingredient(text):
+    """Ultra-strict validation that text is definitely a food ingredient."""
+    text_lower = text.lower().strip()
+    
+    # Must be at least 2 characters
+    if len(text_lower) < 2:
+        return False
+    
+    # Absolute rejection list - if ANY of these appear, it's not an ingredient
+    absolute_rejects = [
+        # Cooking/instruction words
+        "cook", "bake", "fry", "heat", "stir", "mix", "add", "combine", "whisk", "beat",
+        "season", "marinate", "serve", "garnish", "preparation", "method", "recipe",
+        "step", "instruction", "cooking", "kitchen", "chef", "restaurant",
+        
+        # Time/measurement of cooking
+        "minute", "hour", "degree", "temperature", "timer", "fahrenheit", "celsius",
+        "until", "while", "after", "before", "when", "then", "next", "now",
+        
+        # Equipment
+        "pan", "pot", "skillet", "bowl", "plate", "dish", "oven", "stove", "microwave",
+        "blender", "mixer", "processor", "knife", "cutting", "board",
+        
+        # Common non-food words that might appear
+        "video", "channel", "today", "hello", "welcome", "thanks", "recipe", "cooking",
+        "make", "let", "we", "you", "this", "that", "how", "what", "where", "why",
+        "home", "house", "table", "dinner", "lunch", "breakfast", "meal",
+        
+        # Actions that aren't ingredients
+        "preheat", "heat", "warm", "cool", "freeze", "melt", "boil", "simmer"
+    ]
+    
+    # Check each word in the text
+    words = text_lower.split()
+    for word in words:
+        if word in absolute_rejects:
+            return False
+    
+    # Must contain at least one word that's definitely a known ingredient
+    contains_known_ingredient = False
+    for ingredient in COMMON_INGREDIENT_WORDS:
+        if ingredient in text_lower:
+            contains_known_ingredient = True
+            break
+    
+    if not contains_known_ingredient:
+        return False
+    
+    # Additional patterns that indicate non-ingredients
+    non_ingredient_patterns = [
+        r'\b(how to|recipe for|cooking|preparation)\b',
+        r'\b(step \d+|first|second|third|finally)\b',
+        r'\b(let\'s|we\'re|you\'ll|make sure|be careful)\b',
+        r'\b(today|yesterday|tomorrow|video|channel)\b',
+        r'\b\d+\s*(minute|hour|degree)\b',
+        r'\b(preheat|cook for|bake for|until)\b'
+    ]
+    
+    for pattern in non_ingredient_patterns:
+        if re.search(pattern, text_lower):
+            return False
+    
+    # Must not be just common English words
+    common_words = {
+        "the", "a", "an", "and", "or", "but", "with", "for", "in", "on", "to", "at",
+        "is", "are", "was", "were", "be", "been", "have", "has", "had", "do", "does", "did",
+        "will", "would", "could", "should", "can", "may", "might", "must", "shall",
+        "this", "that", "these", "those", "here", "there", "where", "when", "how", "what", "why",
+        "who", "which", "whose", "whom", "all", "some", "any", "each", "every", "no", "not"
+    }
+    
+    # If all words are common words, reject
+    if all(word in common_words for word in words):
+        return False
+    
+    # If more than 60% are common words, reject
+    common_count = sum(1 for word in words if word in common_words)
+    if len(words) > 0 and common_count / len(words) > 0.6:
+        return False
+    
+    return True
+
+
+
+def final_ingredient_validation(ingredients):
+    """Final pass to remove any remaining non-ingredients."""
+    validated = []
+    
+    for ingredient in ingredients:
+        name = ingredient["ingredient"].lower().strip()
+        
+        # Skip very short names
+        if len(name) < 2:
+            continue
+        
+        # Skip if it's just numbers or units
+        if re.match(r'^[\d\s/.-]+$', name):
+            continue
+        
+        # Must contain at least one letter
+        if not re.search(r'[a-zA-Z]', name):
+            continue
+        
+        # Check against known ingredient words one more time
+        is_real_ingredient = False
+        for known_ingredient in COMMON_INGREDIENT_WORDS:
+            if known_ingredient in name:
+                is_real_ingredient = True
+                break
+        
+        if not is_real_ingredient:
+            continue
+        
+        # Final blacklist check
+        final_blacklist = [
+            "recipe", "cooking", "kitchen", "chef", "video", "channel", "today",
+            "minute", "degree", "temperature", "step", "method", "instruction"
+        ]
+        
+        if any(bad_word in name for bad_word in final_blacklist):
+            continue
+        
+        validated.append(ingredient)
+    
+    return validated
+
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/extract', methods=['POST'])
+def extract():
+    data = request.get_json() or {}
+    url = (data.get('youtube_url') or "").strip()
+    if not url:
+        return jsonify({"error": "Missing youtube_url"}), 400
+
+    ydl_opts = {
+        'skip_download': True,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'subtitleslangs': ['en'],
+        'subtitlesformat': 'vtt',
+        'outtmpl': os.path.join(TMP_DIR, '%(id)s.%(ext)s'),
+        'quiet': True,
+        'no_warnings': True,
+    }
+
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            vid_id = info.get('id')
+            # Download subtitle files (no video)
+            ydl.download([url])
+    except Exception as e:
+        return jsonify({"error": f"yt-dlp failed: {str(e)}"}), 500
+
+    # Find vtt file
+    files = [f for f in os.listdir(TMP_DIR) if f.startswith(vid_id) and f.lower().endswith('.vtt')]
+    files_en = [f for f in files if '.en.' in f.lower() or f.lower().endswith('.en.vtt')]
+    chosen = None
+    if files_en:
+        chosen = os.path.join(TMP_DIR, files_en[0])
+    elif files:
+        chosen = os.path.join(TMP_DIR, files[0])
+
+    if not chosen:
+        return jsonify({"error": "No English subtitles found for this video."}), 404
+
+    try:
+        with open(chosen, 'r', encoding='utf-8') as fh:
+            raw = fh.read()
+    except Exception as e:
+        return jsonify({"error": f"Failed to read subtitle file: {e}"}), 500
+
+    lines = clean_vtt_text_to_lines(raw)
+    ingredients = extract_structured_ingredients(lines)
+
+    # Cleanup subtitle files for this video
+    for f in [f for f in os.listdir(TMP_DIR) if f.startswith(vid_id) and f.lower().endswith('.vtt')]:
+        try:
+            os.remove(os.path.join(TMP_DIR, f))
+        except Exception:
+            pass
+
+    return jsonify({"video_id": vid_id, "ingredients": ingredients})
+
+if __name__ == '__main__':
+    app.run(debug=True)
+

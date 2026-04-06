@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recipe Ingredient Extractor </title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: #0f0f0f;
+            min-height: 100vh;
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        /* Animated gradient background */
+        .bg-animation {
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            z-index: -1;
+            background: linear-gradient(45deg, #0f0f0f, #1a1a2e, #16213e, #0f3460);
+            background-size: 400% 400%;
+            animation: gradientShift 15s ease infinite;
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* Floating particles */
+        .particle {
+            position: fixed;
+            width: 3px;
+            height: 3px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            animation: float 20s infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0) translateX(0); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-100vh) translateX(100px); opacity: 0; }
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header Section */
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+            animation: fadeInDown 1s ease-out;
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .logo {
+            font-size: 4em;
+            margin-bottom: 20px;
+            animation: bounce 2s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .header h1 {
+            font-size: 3.5em;
+            font-weight: 800;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 15px;
+            letter-spacing: -1px;
+        }
+
+        .header p {
+            font-size: 1.3em;
+            color: #a0a0a0;
+            font-weight: 300;
+        }
+
+        /* Main Card */
+        .main-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            border-radius: 30px;
+            padding: 50px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            animation: fadeInUp 1s ease-out 0.2s both;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Input Section */
+        .input-section {
+            margin-bottom: 40px;
+        }
+
+        .input-label {
+            display: block;
+            color: #fff;
+            font-size: 1.2em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            gap: 15px;
+            align-items: stretch;
+        }
+
+        .input-field {
+            flex: 1;
+            padding: 20px 25px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 15px;
+            color: #fff;
+            font-size: 1.1em;
+            font-family: 'Poppins', sans-serif;
+            transition: all 0.3s ease;
+        }
+
+        .input-field:focus {
+            outline: none;
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #667eea;
+            box-shadow: 0 0 30px rgba(102, 126, 234, 0.3);
+        }
+
+        .input-field::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .extract-btn {
+            padding: 20px 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 15px;
+            color: #fff;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        .extract-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s;
+        }
+
+        .extract-btn:hover::before {
+            left: 100%;
+        }
+
+        .extract-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.5);
+        }
+
+        .extract-btn:active {
+            transform: translateY(0);
+        }
+
+        .extract-btn:disabled {
+            background: rgba(255, 255, 255, 0.1);
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Loading Animation */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 60px 20px;
+            animation: fadeIn 0.5s;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .loader {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 30px;
+            position: relative;
+        }
+
+        .loader-circle {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border: 4px solid transparent;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .loader-circle:nth-child(2) {
+            border-top-color: #764ba2;
+            animation-duration: 1.5s;
+        }
+
+        .loader-circle:nth-child(3) {
+            border-top-color: #f093fb;
+            animation-duration: 2s;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #fff;
+            font-size: 1.3em;
+            font-weight: 500;
+            margin-bottom: 10px;
+        }
+
+        .loading-subtext {
+            color: #a0a0a0;
+            font-size: 1em;
+        }
+
+        /* Error Message */
+        .error {
+            display: none;
+            background: rgba(244, 67, 54, 0.1);
+            border: 2px solid rgba(244, 67, 54, 0.5);
+            border-radius: 15px;
+            padding: 25px;
+            margin-top: 30px;
+            animation: shake 0.5s;
+        }
+
+        .error.active {
+            display: block;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+
+        .error-icon {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .error-message {
+            color: #ff6b6b;
+            font-size: 1.1em;
+            font-weight: 500;
+        }
+
+        /* Results Section */
+        .results {
+            display: none;
+            margin-top: 50px;
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .results.active {
+            display: block;
+        }
+
+        .results-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .results-title {
+            font-size: 2.5em;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 15px;
+        }
+
+        .results-count {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            padding: 12px 30px;
+            border-radius: 50px;
+            font-size: 1.2em;
+            font-weight: 600;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        /* Ingredients List */
+        .ingredients-list {
+            max-width: 600px;
+            margin: 0 auto 40px;
+            list-style: none;
+        }
+
+        .ingredient-item {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-left: 4px solid #667eea;
+            border-radius: 15px;
+            padding: 20px 30px;
+            margin-bottom: 15px;
+            color: #fff;
+            font-size: 1.2em;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            animation: slideIn 0.5s ease-out both;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .ingredient-item:hover {
+            transform: translateX(10px);
+            background: rgba(255, 255, 255, 0.12);
+            border-left-color: #f093fb;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        }
+
+        /* No Ingredients State */
+        .no-ingredients {
+            text-align: center;
+            padding: 80px 20px;
+            color: #a0a0a0;
+        }
+
+        .no-ingredients-icon {
+            font-size: 5em;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .no-ingredients-text {
+            font-size: 1.3em;
+            line-height: 1.6;
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            padding: 18px 35px;
+            border: none;
+            border-radius: 15px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Poppins', sans-serif;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-copy {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: #fff;
+        }
+
+        .btn-copy:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(56, 239, 125, 0.4);
+        }
+
+        .btn-reset {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-reset:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-3px);
+        }
+
+        /* Prices Section */
+        .btn-prices {
+            background: linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%);
+            color: #fff;
+        }
+
+        .btn-prices:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(255, 107, 107, 0.4);
+        }
+        
+        .price-app-container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            animation: slideIn 0.5s ease-out both;
+        }
+        
+        .app-title {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 20px;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 10px;
+        }
+        
+        .price-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .price-table th, .price-table td {
+            padding: 15px;
+            text-align: left;
+            color: #fff;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .price-table th {
+            font-size: 1.1em;
+            color: #a0a0a0;
+            font-weight: 600;
+        }
+        
+        .price-table tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .badge {
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        
+        .badge-instock {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+        }
+        
+        .badge-outstock {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+        }
+
+        .badge-local {
+            background: rgba(102, 126, 234, 0.2);
+            color: #667eea;
+            border: 1px solid rgba(102, 126, 234, 0.4);
+            margin-left: 10px;
+            font-size: 0.5em;
+            vertical-align: middle;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn-shop {
+            padding: 5px 12px;
+            background: #667eea;
+            color: white;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 0.8em;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: inline-block;
+        }
+
+        .btn-shop:hover {
+            background: #764ba2;
+            transform: scale(1.05);
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            margin-top: 60px;
+            padding: 30px;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2.5em;
+            }
+
+            .main-card {
+                padding: 30px 20px;
+            }
+
+            .input-wrapper {
+                flex-direction: column;
+            }
+
+            .action-buttons {
+                flex-direction: column;
+            }
+
+            .action-btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .ingredient-item {
+                padding: 15px 20px;
+                font-size: 1.1em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Animated Background -->
+    <div class="bg-animation"></div>
+
+    <!-- Floating Particles -->
+    <script>
+        for (let i = 0; i < 30; i++) {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+            particle.style.left = Math.random() * 100 + '%';
+            particle.style.animationDelay = Math.random() * 20 + 's';
+            particle.style.animationDuration = (Math.random() * 10 + 15) + 's';
+            document.body.appendChild(particle);
+        }
+    </script>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo"></div>
+            <h1>Recipe Ingredient Extractor</h1>
+            <p>Ingredient extraction from YouTube cooking videos</p>
+        </div>
+
+        <!-- Main Card -->
+        <div class="main-card">
+            <!-- Input Section -->
+            <div class="input-section">
+                <label class="input-label">Enter YouTube Video URL</label>
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="youtubeUrl"
+                        class="input-field"
+                        placeholder="https://www.youtube.com/watch?v=..."
+                        autocomplete="off"
+                    >
+                    <button class="extract-btn" id="extractBtn" onclick="extractIngredients()">
+                        Extract
+                    </button>
+                </div>
+            </div>
+
+            <!-- Loading Animation -->
+            <div class="loading" id="loading">
+                <div class="loader">
+                    <div class="loader-circle"></div>
+                    <div class="loader-circle"></div>
+                    <div class="loader-circle"></div>
+                </div>
+                <div class="loading-text">Extracting ingredients from video...</div>
+                <div class="loading-subtext">Till drink water!</div>
+            </div>
+
+            <!-- Error Message -->
+            <div class="error" id="error">
+                <div class="error-icon">⚠️</div>
+                <div class="error-message" id="errorMessage"></div>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results" id="results">
+                <div class="results-header">
+                    <h2 class="results-title">Ingredients Detected</h2>
+                    <span class="results-count" id="ingredientCount">0 items</span>
+                </div>
+
+                <ul class="ingredients-list" id="ingredientsList"></ul>
+
+                <div class="action-buttons">
+                    <button class="action-btn btn-copy" onclick="copyIngredients()">
+                        <span>📋</span>
+                        <span>Copy List</span>
+                    </button>
+                    <button class="action-btn btn-reset" onclick="resetForm()">
+                        <span>🔄</span>
+                        <span>Extract Another</span>
+                    </button>
+                    <button class="action-btn btn-prices" id="pricesBtn" onclick="findPrices()">
+                        <span>🛒</span>
+                        <span>Check FlashMart Availability</span>
+                    </button>
+                </div>
+                </div>
+            </div>
+
+            <!-- Prices Section -->
+            <div class="prices-section" id="pricesSection" style="display: none; margin-top: 40px; animation: fadeInUp 0.8s ease-out;">
+                <div class="results-header">
+                    <h2 class="results-title">Grocery Prices</h2>
+                </div>
+                <div id="priceTablesContainer"></div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>Made with ❤️ for food lovers </p>
+        </div>
+    </div>
+
+    <script>
+        let currentIngredients = [];
+
+        async function extractIngredients() {
+            const url = document.getElementById('youtubeUrl').value.trim();
+            
+            if (!url) {
+                showError('Please enter a YouTube URL');
+                return;
+            }
+
+            const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
+            if (!youtubeRegex.test(url)) {
+                showError('Please enter a valid YouTube URL');
+                return;
+            }
+
+            hideError();
+            hideResults();
+            showLoading();
+            disableButton();
+
+            try {
+                const response = await fetch('/extract', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ youtube_url: url })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to extract ingredients');
+                }
+
+                currentIngredients = data.ingredients || [];
+                displayResults(currentIngredients);
+
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                hideLoading();
+                enableButton();
+            }
+        }
+
+        function displayResults(ingredients) {
+            const list = document.getElementById('ingredientsList');
+            const count = document.getElementById('ingredientCount');
+            
+            list.innerHTML = '';
+
+            if (ingredients.length === 0) {
+                list.innerHTML = `
+                    <div class="no-ingredients">
+                        <div class="no-ingredients-icon">🔍</div>
+                        <div class="no-ingredients-text">
+                            No ingredients found in this video.<br>
+                            The video may not have subtitles or may not be a cooking video.
+                        </div>
+                    </div>
+                `;
+                count.textContent = '0 items';
+            } else {
+                count.textContent = `${ingredients.length} ${ingredients.length === 1 ? 'item' : 'items'}`;
+                
+                ingredients.forEach((ingredient, index) => {
+                    const li = document.createElement('li');
+                    li.className = 'ingredient-item';
+                    li.style.animationDelay = `${index * 0.05}s`;
+                    li.textContent = ingredient;
+                    list.appendChild(li);
+                });
+            }
+
+            showResults();
+        }
+
+        async function copyIngredients() {
+            if (currentIngredients.length === 0) {
+                showError('No ingredients to copy');
+                return;
+            }
+
+            const text = currentIngredients.join('\n');
+
+            try {
+                // Method 1: Try modern clipboard API
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(text);
+                    showCopySuccess();
+                } else {
+                    // Method 2: Fallback for older browsers or non-HTTPS
+                    const textArea = document.createElement('textarea');
+                    textArea.value = text;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-999999px';
+                    textArea.style.top = '-999999px';
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    
+                    try {
+                        const successful = document.execCommand('copy');
+                        if (successful) {
+                            showCopySuccess();
+                        } else {
+                            throw new Error('Copy command failed');
+                        }
+                    } finally {
+                        textArea.remove();
+                    }
+                }
+            } catch (err) {
+                console.error('Copy failed:', err);
+                showError('Failed to copy to clipboard. Please try selecting and copying manually.');
+            }
+        }
+
+        function showCopySuccess() {
+            const btn = document.querySelector('.btn-copy');
+            if (!btn) return;
+            
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<span>✓</span><span>Copied!</span>';
+            btn.style.background = 'linear-gradient(135deg, #28a745 0%, #20c997 100%)';
+            
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+                btn.style.background = '';
+            }, 2000);
+        }
+
+        function resetForm() {
+            document.getElementById('youtubeUrl').value = '';
+            hideResults();
+            hideError();
+            document.getElementById('pricesSection').style.display = 'none';
+            document.getElementById('priceTablesContainer').innerHTML = '';
+            currentIngredients = [];
+        }
+
+        async function findPrices() {
+            if (currentIngredients.length === 0) {
+                showError('No ingredients to find prices for.');
+                return;
+            }
+            
+            const btn = document.getElementById('pricesBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span>⏳</span><span>Fetching Prices...</span>';
+            btn.disabled = true;
+            
+            try {
+                const response = await fetch('/get_prices', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ingredients: currentIngredients })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to fetch prices');
+                }
+                
+                renderPriceTables(data.prices);
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+        
+        function renderPriceTables(prices) {
+            const container = document.getElementById('priceTablesContainer');
+            const section = document.getElementById('pricesSection');
+            
+            container.innerHTML = '';
+            
+            const apps = Object.keys(prices);
+            if (apps.length === 0 || (apps.length === 1 && prices[apps[0]].length === 0)) {
+                container.innerHTML = `
+                    <div class="no-ingredients">
+                        <div class="no-ingredients-icon">🏪</div>
+                        <div class="no-ingredients-text">
+                            No matching products found in your FlashMart store for these ingredients.<br>
+                            Ensure your FlashMart database has these items.
+                        </div>
+                    </div>
+                `;
+                section.style.display = 'block';
+                return;
+            }
+            
+            for (const [appName, items] of Object.entries(prices)) {
+                const isFlashMart = appName === "FlashMart";
+                if (items.length === 0) continue;
+
+                let html = `
+                <div class="price-app-container" style="border: 2px solid rgba(102, 126, 234, 0.5); background: rgba(102, 126, 234, 0.05);">
+                    <h3 class="app-title">
+                        ${appName}
+                        ${isFlashMart ? '<span class="badge badge-local">My Local Store</span>' : ''}
+                    </h3>
+                    <div style="overflow-x: auto;">
+                        <table class="price-table">
+                            <thead>
+                                <tr>
+                                    <th>Ingredient</th>
+                                    <th>Quantity</th>
+                                    <th>Price</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                items.forEach(item => {
+                    const priceText = (typeof item.price === 'number') ? `₹${item.price}` : '-';
+                    
+                    // Direct link to add to cart and checkout in FlashMart or just show Compare Only for others
+                    let actionHtml = '';
+                    if (isFlashMart) {
+                        const flashMartLink = `http://localhost:5000/client/index.html#!/checkout?add_product=${item.productId}`;
+                        actionHtml = `<a href="${flashMartLink}" target="_blank" class="btn-shop" style="background: linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%);">🛒 Add to Cart</a>`;
+                    } else {
+                        actionHtml = `<span style="font-size: 0.8em; color: #a0a0a0;">Compare Only</span>`;
+                    }
+
+                    html += `
+                        <tr>
+                            <td>
+                                <strong>${item.product_name}</strong>
+                                <div style="font-size: 0.7em; color: #a0a0a0;">Ingredient match</div>
+                            </td>
+                            <td>${item.quantity}</td>
+                            <td style="font-weight: 600; color: #38ef7d;">${priceText}</td>
+                            <td>${actionHtml}</td>
+                        </tr>
+                    `;
+                });
+                
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                </div>`;
+                
+                container.innerHTML += html;
+            }
+            
+            section.style.display = 'block';
+            
+            setTimeout(() => {
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
+        }
+
+        function showLoading() {
+            document.getElementById('loading').classList.add('active');
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('active');
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('error').classList.add('active');
+        }
+
+        function hideError() {
+            document.getElementById('error').classList.remove('active');
+        }
+
+        function showResults() {
+            document.getElementById('results').classList.add('active');
+        }
+
+        function hideResults() {
+            document.getElementById('results').classList.remove('active');
+        }
+
+        function disableButton() {
+            const btn = document.getElementById('extractBtn');
+            btn.disabled = true;
+            btn.textContent = 'Extracting...';
+        }
+
+        function enableButton() {
+            const btn = document.getElementById('extractBtn');
+            btn.disabled = false;
+            btn.textContent = 'Extract';
+        }
+
+        // Enter key to submit
+        document.getElementById('youtubeUrl').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                extractIngredients();
+            }
+        });
+    </script>
+</body>
+</html>
